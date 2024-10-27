@@ -4,9 +4,7 @@ import com.google.inject.Provides;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.*;
-import net.runelite.api.events.GameStateChanged;
-import net.runelite.api.events.ItemSpawned;
-import net.runelite.client.callback.ClientThread;
+import net.runelite.api.events.ChatMessage;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.game.ItemManager;
@@ -15,7 +13,8 @@ import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.util.ColorUtil;
 
 import java.awt.*;
-import java.util.Objects;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 
 @Slf4j
@@ -32,13 +31,7 @@ public class ValuableDropPricesPlugin extends Plugin
 	private ItemManager itemManager;
 
 	@Inject
-	private ClientThread clientThread;
-
-	@Inject
 	private ValuableDropPricesConfig config;
-
-	// VARBIT 5399 = Valuable Drop Notifications!
-	private static final int VALUABLE_DROP_SETTING_VAR = 5399;
 
 	@Provides
 	ValuableDropPricesConfig provideConfig(ConfigManager configManager)
@@ -47,128 +40,81 @@ public class ValuableDropPricesPlugin extends Plugin
 	}
 
 	@Subscribe
-	public void onGameStateChanged(GameStateChanged gameStateChanged)
-	{
-		if (gameStateChanged.getGameState() == GameState.LOGGED_IN)
-		{
-			clientThread.invoke(() -> {
-				client.setVarbitValue(client.getVarps(), VALUABLE_DROP_SETTING_VAR, 0); // 1 == enabled, 0 == disabled. I don't think this is working tho? It's not fucking working
-			});
+	public void onChatMessage(ChatMessage chatMessage) {
+		MessageNode messageNode = chatMessage.getMessageNode();
+		if (messageNode.getType() != ChatMessageType.GAMEMESSAGE) {
+			return;
 		}
-	}
 
-	@Subscribe
-	public void onItemSpawned(ItemSpawned itemSpawned) {
-		TileItem item = itemSpawned.getItem();
+		// Pattern regEx from Mafhams plugins: https://github.com/Mafham/mafham-plugins/
+		String valuableDropPatternString = "Valuable drop: ((?:\\d+ x )?(.*?)) \\((\\d{1,3}(?:,\\d{3})*|\\d+) coin(?:s?)\\)";
+		Pattern valuableDropPattern = Pattern.compile(valuableDropPatternString);
+		Matcher valuableDropMatcher = valuableDropPattern.matcher(messageNode.getValue());
 
+		if (valuableDropMatcher.find()) {
+			// Extract item name and quantity
+			String quantityString = valuableDropMatcher.group(1);
+			String itemName = valuableDropMatcher.group(2);
+			int quantity = quantityString != null & quantityString.contains(" x ") ? Integer.parseInt(quantityString.split(" x ")[0]) : 1;
 
-		// Check if item is owned by player and if the item has just spawned
-		if (item.getOwnership() == 1) {
-			if (item.getDespawnTime() >= 250) {
-				int itemId = item.getId();
-				int quantity = item.getQuantity();
+			// Get item ID and fetch values
+			int itemId = itemManager.search(itemName).get(0).getId(); // Basic itemID search. Maybe there's a better way?
+			int geValue = itemManager.getItemPrice(itemId);
+			int haValue = client.getItemDefinition(itemId).getHaPrice();
 
-				handleValuableDrop(itemId, quantity);
+			// Check if item is "coins" or "coin". If it is set value to 1 to avoid insanely high nonsense numbers.
+			if (itemName.equalsIgnoreCase("coins") || itemName.equalsIgnoreCase("coin")) {
+				geValue = 1;
+				haValue = 1;
 			}
-		}
 
-	}
+			// Debugging
+			if (config.debugMode()) {
+				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Item Name: " + itemName, null);
+				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Item Quantity String: " + quantityString, null);
+				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Item Quantity Int: " + quantity, null);
+				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Item Value: " + valuableDropMatcher.group(3), null);
 
-	private void handleValuableDrop(int itemId, int quantity) {
-		// Fetch GE and HA value
-		ItemPriceInfo priceInfo = fetchItemPrices(itemId);
+				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Item ID: " + itemId, null);
+			}
 
-		Color messageColour = config.valuableDropColour();
+			// Calculate total values
+			int totalGEValue = geValue * quantity;
+			int totalHAValue = haValue * quantity;
 
-		int totalHAValue = priceInfo.getHAValue() * quantity;
-		int totalGEValue = priceInfo.getGEValue() * quantity;
-
-		// If value is greater than 0, then add item value and gp. If not then make it say "no value"
-		String geValueString = totalGEValue > 0 ? totalGEValue + " gp" : "no value";
-		String haValueString = totalHAValue > 0 ? totalHAValue + " gp" : "no value";
-
-		// Check if threshold and preference for valuable item
-		int valuableDropThreshold = config.valuableDropThreshold();
-		boolean isValuable = false;
-
-		if (config.valuableConsideration() == ValuableDropConsiderationType.HIGH_ALCH) {
-			isValuable = totalHAValue >= valuableDropThreshold;
-		} else if (config.valuableConsideration() == ValuableDropConsiderationType.GRAND_EXCHANGE) {
-			isValuable = totalGEValue >= valuableDropThreshold;
-		} else if (config.valuableConsideration() == ValuableDropConsiderationType.BOTH) {
-			isValuable = (totalGEValue >= valuableDropThreshold || totalHAValue >= valuableDropThreshold);
-		}
-
-		if (isValuable || geValueString.equals("no value") && haValueString.equals("no value")) {
 			// Format message based on user configuration
-			String message = ColorUtil.prependColorTag(formatDropMessage(itemManager.getItemComposition(itemId).getName(), haValueString, geValueString), messageColour);
+			String modifiedMessage = formatDropMessage(itemName, quantityString, totalHAValue, totalGEValue);
 
-			// Send message in chat
-			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", message, null);
+			// Append string onto default message
+			messageNode.setValue(ColorUtil.prependColorTag(modifiedMessage, Color.decode("#EF1020"))); // Find out how to fetch the colour from settings or the original message.
 		}
+
 	}
 
-	private ItemPriceInfo fetchItemPrices(int itemId) {
-		ItemPriceInfo priceInfo = new ItemPriceInfo();
-
-		// Use ItemManager to fetch GE value
-		int geValue = itemManager.getItemPrice(itemId);
-		priceInfo.setGEValue(geValue);
-
-		// Use ItemComposition to fetch HA value
-		ItemComposition itemComposition = client.getItemDefinition(itemId);
-		int haValue = itemComposition.getHaPrice();
-		priceInfo.setHAValue(haValue);
-
-		return priceInfo;
-	}
-
-	private String formatDropMessage(String itemName, String haValue, String geValue) {
+	private String formatDropMessage(String itemName, String quantityString, int haValue, int geValue) {
 		ValuableDropPriceDisplayType displayType = config.displayPrices();
+		String haValueString = haValue > 0 ? haValue + " gp" : "no value";
+		String geValueString = geValue > 0 ? geValue + " gp" : "no value";
+		String valueString;
 
-		/*
-			Figure out a way to limit displaytype or considerationtype based on the other so the player doesn't
-			end up having a message like "Valuable Drop: Dragon Born (GE: No Value)" because they have the
-			displaytype set to GE but considerationtype is set to HA.
-			a.k.a make it more obvious why something not valuable showed up as a valuable drop due to displaytype and considerationtype not being a match.
-		 */
-		if (!Objects.equals(haValue, "no value") && !Objects.equals(geValue, "no value")) {
-			switch (displayType) {
-				case GRAND_EXCHANGE:
-					return String.format("Valuable Drop: %s (GE: %s)", itemName, geValue);
-				case HIGH_ALCH:
-					return String.format("Valuable Drop: %s (HA: %s)", itemName, haValue);
-				case BOTH:
-					return String.format("Valuable Drop: %s (GE: %s, HA: %s)", itemName, geValue, haValue);
-
-				default:
-					return "Valuable Drop: " + itemName;
-			}
-		} else {
-			return "Untradeable Drop: " + itemName;
-		}
-	}
-
-	// Store GE and HA Value
-	private class ItemPriceInfo {
-		private int haValue;
-		private int geValue;
-
-		public int getHAValue() {
-			return haValue;
+		// set valuestring based on the users settings.
+		switch (displayType) {
+			case GRAND_EXCHANGE:
+				valueString = itemName.equalsIgnoreCase("coins") || itemName.equalsIgnoreCase("coin") ? String.format("(%s)", geValueString) : String.format("(GE: %s)", geValueString);
+				break;
+			case HIGH_ALCH:
+				valueString = itemName.equalsIgnoreCase("coins") || itemName.equalsIgnoreCase("coin") ? String.format("(%s)", haValueString) : String.format("(HA: %s)", haValueString);
+				break;
+			case BOTH:
+				valueString = itemName.equalsIgnoreCase("coins") || itemName.equalsIgnoreCase("coin") ? String.format("(%s)", geValueString) : String.format("(GE: %s, HA: %s)", geValueString, haValueString);
+				break;
+			default:
+				valueString = "";
+				break;
 		}
 
-		public void setHAValue(int haValue) {
-			this.haValue = haValue;
-		}
-
-		public int getGEValue() {
-			return geValue;
-		}
-
-		public void setGEValue(int geValue) {
-			this.geValue = geValue;
-		}
+		// Build full message
+		return String.format("Valuable drop: %s %s", (quantityString != null ? quantityString : itemName), valueString);
 	}
 
 }

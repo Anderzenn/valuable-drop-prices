@@ -9,10 +9,10 @@ You can also modify the colour of the chat notification.
 (Colour modifications, as well as which price has priority is temporarily disabled as I work on a better implementation)
 
 # Known Issues
-- If display type is set to i.e. High Alch, but primary value is set to Both and and the item has no value in HA, but does in GE - Then the valueable drop will say "no value" even though it has a GE value.
+[#2 [BUG] If grand exchange value is below threshold, but high alch value is above, no message is written in chat.](https://github.com/Anderzenn/valuable-drop-prices/issues/2)
 
 If you spot any issues or have any requests, please let me know under the issues tab!
 
 # To do
-- Add handling of conflicting display type and primary value.
-- Redo colour modification
+- Redo/reimplement colour modification
+    - [#3 [REQUEST] Colour modifications](https://github.com/Anderzenn/valuable-drop-prices/issues/3)

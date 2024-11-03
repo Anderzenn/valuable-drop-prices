@@ -5,6 +5,8 @@ import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.*;
 import net.runelite.api.events.ChatMessage;
+import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.VarbitChanged;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.game.ItemManager;
@@ -33,10 +35,32 @@ public class ValuableDropPricesPlugin extends Plugin
 	@Inject
 	private ValuableDropPricesConfig config;
 
+	int dropThreshold;
+	int dropThresholdId = 5400;
+
 	@Provides
 	ValuableDropPricesConfig provideConfig(ConfigManager configManager)
 	{
 		return configManager.getConfig(ValuableDropPricesConfig.class);
+	}
+
+	@Subscribe
+	public void onGameStateChanged(GameStateChanged gameStateChanged) {
+		if (gameStateChanged.getGameState() == GameState.LOGGED_IN) {
+
+			// Check what the clients valuable drop threshold is set to in settings and set variable to new value.
+			dropThreshold = client.getVarbitValue(dropThresholdId);
+        }
+	}
+
+	@Subscribe
+	public void onVarbitChanged(VarbitChanged event) {
+
+		// Check if varbit matching the valuable drop threshold setting has changed, if so set variable to new value.
+		// Also sets the value if the server never sent the actual value on login.
+		if (event.getVarbitId() == dropThresholdId) {
+			dropThreshold = client.getVarbitValue(dropThresholdId);
+		}
 	}
 
 	@Subscribe
@@ -68,6 +92,16 @@ public class ValuableDropPricesPlugin extends Plugin
 				haValue = 1;
 			}
 
+			// Check if displayType is HA and if haValue is zero or if it's below the drop threshold. If it is, then don't print a message.
+			// And do the same for GE.
+			if (config.displayPrices() == ValuableDropPriceDisplayType.HIGH_ALCH && haValue == 0 || config.displayPrices() == ValuableDropPriceDisplayType.HIGH_ALCH && haValue < dropThreshold) {
+				messageNode.setValue(null);
+				return;
+			} else if (config.displayPrices() == ValuableDropPriceDisplayType.GRAND_EXCHANGE && geValue == 0 || config.displayPrices() == ValuableDropPriceDisplayType.GRAND_EXCHANGE && geValue < dropThreshold) {
+				messageNode.setValue(null);
+				return;
+			}
+
 			// Debugging
 			if (config.debugMode()) {
 				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Item Name: " + itemName, null);
@@ -93,8 +127,8 @@ public class ValuableDropPricesPlugin extends Plugin
 
 	private String formatDropMessage(String itemName, String quantityString, int haValue, int geValue) {
 		ValuableDropPriceDisplayType displayType = config.displayPrices();
-		String haValueString = haValue > 0 ? haValue + " gp" : "no value";
-		String geValueString = geValue > 0 ? geValue + " gp" : "no value";
+		String haValueString = haValue > 0 ? haValue + " gp" : "";
+		String geValueString = geValue > 0 ? geValue + " gp" : "";
 		String valueString;
 
 		// set valuestring based on the users settings.

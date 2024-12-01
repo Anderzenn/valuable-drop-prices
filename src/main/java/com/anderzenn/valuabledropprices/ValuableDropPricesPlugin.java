@@ -13,8 +13,10 @@ import net.runelite.client.game.ItemManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.util.ColorUtil;
+import net.runelite.client.util.QuantityFormatter;
 
 import java.awt.*;
+import java.util.Random;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -31,6 +33,7 @@ public class ValuableDropPricesPlugin extends Plugin
 
 	@Inject
 	private ItemManager itemManager;
+
 
 	@Inject
 	private ValuableDropPricesConfig config;
@@ -102,14 +105,27 @@ public class ValuableDropPricesPlugin extends Plugin
 				return;
 			}
 
-			// Debugging
+			// DEBUGGING
 			if (config.debugMode()) {
-				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Item Name: " + itemName, null);
-				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Item Quantity String: " + quantityString, null);
-				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Item Quantity Int: " + quantity, null);
-				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Item Value: " + valuableDropMatcher.group(3), null);
 
-				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Item ID: " + itemId, null);
+				if (config.prntItemName()) client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Item Name: " + itemName, null);
+				if (config.prntItemQuantity()) client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Item Quantity String: " + quantityString, null);
+				if (config.prntItemQuantityInt()) client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Item Quantity Int: " + quantity, null);
+				if (config.prntItemValue()) client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Item Value: " + valuableDropMatcher.group(3), null);
+
+				if (config.prntItemId()) client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Item ID: " + itemId, null);
+
+				if (config.debugValues()) {
+					if (itemName.equalsIgnoreCase("bones")) {
+						// Random price for debugging purposes
+						// Random number between 1k and 10m
+						//											MAX		  MIN	   MIN
+						int randomPrice = (int)((Math.random() * (10000000 - 1000)) + 1000);
+
+						geValue = randomPrice;
+						haValue = randomPrice;
+					}
+				}
 			}
 
 			// Calculate total values
@@ -120,31 +136,58 @@ public class ValuableDropPricesPlugin extends Plugin
 			String modifiedMessage = formatDropMessage(itemName, quantityString, totalHAValue, totalGEValue);
 
 			// Append string onto default message
-			messageNode.setValue(ColorUtil.prependColorTag(modifiedMessage, Color.decode("#EF1020"))); // Find out how to fetch the colour from settings or the original message.
+			messageNode.setValue(ColorUtil.prependColorTag(modifiedMessage, config.mainColour()));
 		}
 
 	}
 
 	private String formatDropMessage(String itemName, String quantityString, int haValue, int geValue) {
 		ValuableDropPriceDisplayType displayType = config.displayPrices();
-		String haValueString = haValue > 0 ? haValue + " gp" : "";
-		String geValueString = geValue > 0 ? geValue + " gp" : "";
+		String haValueString = haValue >= 0 ? (config.formatPrices() ? QuantityFormatter.quantityToRSDecimalStack(haValue) : QuantityFormatter.formatNumber(haValue)) + " gp" : "";
+		String geValueString = geValue >= 0 ? (config.formatPrices() ? QuantityFormatter.quantityToRSDecimalStack(geValue) : QuantityFormatter.formatNumber(geValue)) + " gp" : "";
 		String valueString;
+
+		String final_haValueString = itemName.equalsIgnoreCase("coins") || itemName.equalsIgnoreCase("coin") ? String.format("(%s)", haValueString) : String.format("(HA: %s)", haValueString);
+		String final_geValueString = itemName.equalsIgnoreCase("coins") || itemName.equalsIgnoreCase("coin") ? String.format("(%s)", geValueString) : String.format("(GE: %s)", geValueString);
 
 		// set valuestring based on the users settings.
 		switch (displayType) {
 			case GRAND_EXCHANGE:
-				valueString = itemName.equalsIgnoreCase("coins") || itemName.equalsIgnoreCase("coin") ? String.format("(%s)", geValueString) : String.format("(GE: %s)", geValueString);
+				valueString = final_geValueString;
 				break;
 			case HIGH_ALCH:
-				valueString = itemName.equalsIgnoreCase("coins") || itemName.equalsIgnoreCase("coin") ? String.format("(%s)", haValueString) : String.format("(HA: %s)", haValueString);
+				valueString = final_haValueString;
 				break;
 			case BOTH:
-				valueString = itemName.equalsIgnoreCase("coins") || itemName.equalsIgnoreCase("coin") ? String.format("(%s)", geValueString) : String.format("(GE: %s, HA: %s)", geValueString, haValueString);
+				// If there is no ha value, but there is a ge value, only show the ge value.
+				if (haValue <= 0 && geValue >= 0) {
+					valueString = final_geValueString;
+				}
+				// if there is a ha value, but there is no ge value, only show the ha value.
+				else if (haValue >= 0 && geValue <= 0) {
+					valueString = final_haValueString;
+				}
+				// If there is a ha value, AND there is a ge value, show both values.
+				else {
+					valueString = itemName.equalsIgnoreCase("coins") || itemName.equalsIgnoreCase("coin") ? String.format("(%s)", geValueString) : String.format("(GE: %s, HA: %s)", geValueString, haValueString);
+				}
+
 				break;
 			default:
 				valueString = "";
 				break;
+		}
+
+		// Check if user wants to use main colour for values
+		if (!config.useMainColour_value()) {
+			valueString = ColorUtil.prependColorTag(valueString, config.valueColour());
+			valueString = ColorUtil.prependColorTag(valueString, config.valueColour());
+		}
+
+		// Check if user wants to use main colour for item names
+		if (!config.useMainColour_item()) {
+			quantityString = ColorUtil.prependColorTag(quantityString, config.itemColour());
+			itemName = ColorUtil.prependColorTag(itemName, config.itemColour());
 		}
 
 		// Build full message
